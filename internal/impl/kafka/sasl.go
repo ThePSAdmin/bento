@@ -24,21 +24,29 @@ func notImportedAWSFnSarama(c *service.ParsedConfig) (sarama.AccessTokenProvider
 	return nil, errors.New("unable to configure AWS SASL as this binary does not import components/aws")
 }
 
+func notImportedAzureFn(c *service.ParsedConfig) (sasl.Mechanism, error) {
+	return nil, errors.New("unable to configure Azure SASL as this binary does not import components/azure")
+}
+
 // AWSSASLFromConfigFn is populated with the child `aws` package when imported.
 var AWSSASLFromConfigFn = notImportedAWSFn
 
 // AWSSASLFromConfigFnSarama is populated with the child `aws` package when imported.
 var SaramaTokenProviderFromConfigFn = notImportedAWSFnSarama
 
+// AzureSASLFromConfigFn is populated with the child `azure` package when imported.
+var AzureSASLFromConfigFn = notImportedAzureFn
+
 func saslField() *service.ConfigField {
 	return service.NewObjectListField("sasl",
 		service.NewStringAnnotatedEnumField("mechanism", map[string]string{
-			"none":          "Disable sasl authentication",
-			"PLAIN":         "Plain text authentication.",
-			"OAUTHBEARER":   "OAuth Bearer based authentication.",
-			"SCRAM-SHA-256": "SCRAM based authentication as specified in RFC5802.",
-			"SCRAM-SHA-512": "SCRAM based authentication as specified in RFC5802.",
-			"AWS_MSK_IAM":   "AWS IAM based authentication as specified by the 'aws-msk-iam-auth' java library.",
+			"none":                     "Disable sasl authentication",
+			"PLAIN":                    "Plain text authentication.",
+			"OAUTHBEARER":              "OAuth Bearer based authentication.",
+			"SCRAM-SHA-256":            "SCRAM based authentication as specified in RFC5802.",
+			"SCRAM-SHA-512":            "SCRAM based authentication as specified in RFC5802.",
+			"AWS_MSK_IAM":              "AWS IAM based authentication as specified by the 'aws-msk-iam-auth' java library.",
+			"AZURE_WORKLOAD_IDENTITY":  "Azure Workload Identity based authentication for Azure Event Hubs.",
 		}).
 			Description("The SASL mechanism to use."),
 		service.NewStringField("username").
@@ -55,6 +63,16 @@ func saslField() *service.ConfigField {
 			Optional(),
 		service.NewObjectField("aws", config.SessionFields()...).
 			Description("Contains AWS specific fields for when the `mechanism` is set to `AWS_MSK_IAM`.").
+			Optional(),
+		service.NewObjectField("azure",
+			service.NewStringField("broker_address").
+				Description("The Event Hubs namespace FQDN (e.g., 'mynamespace.servicebus.windows.net'). This is used to construct the OAuth scope for Azure authentication.").
+				Default(""),
+			service.NewStringListField("scopes").
+				Description("Optional custom OAuth scopes for Azure authentication. If not specified, the scope will be automatically constructed as 'https://<broker_address>/.default'.").
+				Optional(),
+		).
+			Description("Contains Azure specific fields for when the `mechanism` is set to `AZURE_WORKLOAD_IDENTITY`.").
 			Optional(),
 	).
 		Description("Specify one or more methods of SASL authentication. SASL is tried in order; if the broker supports the first mechanism, all connections will use that mechanism. If the first mechanism fails, the client will pick the first supported mechanism. If the broker does not support any client mechanisms, connections will fail.").
@@ -102,6 +120,9 @@ func saslMechanismsFromConfig(c *service.ParsedConfig) ([]sasl.Mechanism, error)
 				mechanisms = append(mechanisms, mechanism)
 			case "AWS_MSK_IAM":
 				mechanism, err = AWSSASLFromConfigFn(mConf)
+				mechanisms = append(mechanisms, mechanism)
+			case "AZURE_WORKLOAD_IDENTITY":
+				mechanism, err = AzureSASLFromConfigFn(mConf)
 				mechanisms = append(mechanisms, mechanism)
 			default:
 				err = fmt.Errorf("unknown mechanism: %v", mechStr)
