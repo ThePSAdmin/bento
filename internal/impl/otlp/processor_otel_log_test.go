@@ -814,3 +814,67 @@ body: "${! json(\"message\") }"
 		assert.Equal(t, "null", records[0].Body().AsString())
 	})
 }
+
+func TestOtelLogProcessor_DottedAttributeKeys(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("quoted_keys_create_flat_attributes", func(t *testing.T) {
+		proc, mockExp := newTestOtelLogProcessor(t, `
+http:
+  - address: localhost:4318
+body: test
+attributes_mapping: |
+  root."foo.bar" = "value1"
+  root."foo.baz" = "value2"
+`)
+		t.Cleanup(func() { _ = proc.Close(ctx) })
+
+		msg := service.NewMessage([]byte(`{}`))
+		_, err := proc.Process(ctx, msg)
+		require.NoError(t, err)
+
+		_ = proc.provider.ForceFlush(ctx)
+
+		records := mockExp.Records()
+		require.Len(t, records, 1)
+
+		attrs := make(map[string]string)
+		records[0].WalkAttributes(func(kv log.KeyValue) bool {
+			attrs[kv.Key] = kv.Value.AsString()
+			return true
+		})
+
+		// Quoted keys should create flat attributes with dots in the key
+		assert.Equal(t, "value1", attrs["foo.bar"])
+		assert.Equal(t, "value2", attrs["foo.baz"])
+	})
+
+	t.Run("object_literal_creates_flat_attributes", func(t *testing.T) {
+		proc, mockExp := newTestOtelLogProcessor(t, `
+http:
+  - address: localhost:4318
+body: test
+attributes_mapping: |
+  root = {"service.name": "my-service", "service.version": "1.0.0"}
+`)
+		t.Cleanup(func() { _ = proc.Close(ctx) })
+
+		msg := service.NewMessage([]byte(`{}`))
+		_, err := proc.Process(ctx, msg)
+		require.NoError(t, err)
+
+		_ = proc.provider.ForceFlush(ctx)
+
+		records := mockExp.Records()
+		require.Len(t, records, 1)
+
+		attrs := make(map[string]string)
+		records[0].WalkAttributes(func(kv log.KeyValue) bool {
+			attrs[kv.Key] = kv.Value.AsString()
+			return true
+		})
+
+		assert.Equal(t, "my-service", attrs["service.name"])
+		assert.Equal(t, "1.0.0", attrs["service.version"])
+	})
+}
