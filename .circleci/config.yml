@@ -10,17 +10,11 @@ jobs:
     resource_class: large
     steps:
       - checkout
-      - run:
-          name: Install GoReleaser
-          command: |
-            curl -sfL https://install.goreleaser.com/github.com/goreleaser/goreleaser.sh | sudo sh -s -- -b /usr/local/bin
-      - run:
-          name: Generate Release Notes
-          command: ./resources/scripts/release_notes.sh > ./release_notes.md
-      - run:
-          name: Run GoReleaser
-          command: goreleaser release --release-notes=./release_notes.md --timeout 120m
-          no_output_timeout: 120m
+      - go/install-goreleaser
+      - go/goreleaser-release:
+          project-path: .
+          publish-release: true
+          validate-yaml: true
 
   docker:
     docker:
