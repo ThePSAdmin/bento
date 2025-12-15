@@ -15,8 +15,8 @@ builds:
       - CGO_ENABLED=0
     ldflags: >
       -s -w
-      -X github.com/warpstreamlabs/bento/internal/cli.Version={{.Version}}
-      -X github.com/warpstreamlabs/bento/internal/cli.DateBuilt={{.Date}}
+      -X github.com/thepsadmin/bento/internal/cli.Version={{.Version}}
+      -X github.com/thepsadmin/bento/internal/cli.DateBuilt={{.Date}}
       -X main.Version={{.Version}}
       -X main.DateBuilt={{.Date}}
   - id: bento-lambda
@@ -52,7 +52,7 @@ archives:
 dist: target/dist
 release:
   github:
-    owner: warpstreamlabs
+    owner: thepsadmin
     name: bento
   prerelease: auto
   disable: false
