@@ -39,7 +39,7 @@ jobs:
         version: latest
         args: release --release-notes=./release_notes.md --timeout 120m
       env:
-        GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
     runs-on: ubuntu-latest
