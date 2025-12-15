@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/couchbase/gocb/v2"
 
@@ -34,15 +35,18 @@ func ProcessorConfig() *service.ConfigSpec {
 		Description("When inserting, replacing or upserting documents, each must have the `content` property set.\n\n### Concurrent Document Mutations\nTo prevent read/write conflicts, Couchbase returns a [_Compare And Swap_ (CAS)](https://docs.couchbase.com/go-sdk/current/howtos/concurrent-document-mutations.html) value with each accessed document. Bento stores these as key/value pairs in metadata with the `couchbase_cas` field. Note: CAS checks are enabled by default. You can configure this by changing the value of `cas_enabled: false`.").
 		Field(service.NewInterpolatedStringField("id").Description("Document id.").Example(`${! json("id") }`)).
 		Field(service.NewBloblangField("content").Description("Document content.").Optional()).
+		Field(service.NewDurationField("ttl").Description("An optional TTL to set for items.").Optional().Advanced()).
 		Field(service.NewStringAnnotatedEnumField("operation", map[string]string{
-			string(client.OperationGet):     "fetch a document.",
-			string(client.OperationInsert):  "insert a new document.",
-			string(client.OperationRemove):  "delete a document.",
-			string(client.OperationReplace): "replace the contents of a document.",
-			string(client.OperationUpsert):  "creates a new document if it does not exist, if it does exist then it updates it.",
+			string(client.OperationGet):       "Fetch a document.",
+			string(client.OperationInsert):    "Insert a new document.",
+			string(client.OperationRemove):    "Delete a document.",
+			string(client.OperationReplace):   "Replace the contents of a document.",
+			string(client.OperationUpsert):    "Creates a new document if it does not exist, if it does exist then it updates it.",
+			string(client.OperationIncrement): "Increment a counter by the value in content, if it does not exist then it creates a counter with an initial value equal to the value in content. If the initial value is less than or equal to 0, a document not found error is returned.",
+			string(client.OperationDecrement): "Decrement a counter by the value in content, if it does not exist then it creates a counter with an initial value equal to the negative of the value in content. If the initial value is less than or equal to 0, a document not found error is returned.",
 		}).Description("Couchbase operation to perform.").Default(string(client.OperationGet))).
 		Field(service.NewBoolField("cas_enabled").Description("Enable CAS validation.").Default(true).Version("1.3.0")). // TODO: Consider removal in next release?
-		LintRule(`root = if ((this.operation == "insert" || this.operation == "replace" || this.operation == "upsert") && !this.exists("content")) { [ "content must be set for insert, replace and upsert operations." ] }`)
+		LintRule(`root = if ((this.operation == "insert" || this.operation == "replace" || this.operation == "upsert" || this.operation == "increment" || this.operation == "decrement") && !this.exists("content")) { [ "content must be set for insert, replace, upsert, increment and decrement operations." ] }`)
 }
 
 func init() {
@@ -64,7 +68,8 @@ type Processor struct {
 	*couchbaseClient
 	id         *service.InterpolatedString
 	content    *bloblang.Executor
-	op         func(key string, data []byte, cas gocb.Cas) gocb.BulkOp
+	ttl        *time.Duration
+	op         func(key string, data []byte, cas gocb.Cas, ttl *time.Duration) (gocb.BulkOp, error)
 	casEnabled bool
 }
 
@@ -86,6 +91,14 @@ func NewProcessor(conf *service.ParsedConfig, mgr *service.Resources) (*Processo
 		if p.content, err = conf.FieldBloblang("content"); err != nil {
 			return nil, err
 		}
+	}
+
+	if conf.Contains("ttl") {
+		ttlTmp, err := conf.FieldDuration("ttl")
+		if err != nil {
+			return nil, err
+		}
+		p.ttl = &ttlTmp
 	}
 
 	p.casEnabled, err = conf.FieldBool("cas_enabled")
@@ -117,6 +130,10 @@ func NewProcessor(conf *service.ParsedConfig, mgr *service.Resources) (*Processo
 			return nil, ErrContentRequired
 		}
 		p.op = upsert
+	case client.OperationIncrement:
+		p.op = increment
+	case client.OperationDecrement:
+		p.op = decrement
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrInvalidOperation, op)
 	}
@@ -164,7 +181,10 @@ func (p *Processor) ProcessBatch(ctx context.Context, inBatch service.MessageBat
 			}
 		}
 
-		ops[index] = p.op(k, content, cas)
+		ops[index], err = p.op(k, content, cas, p.ttl)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// execute
